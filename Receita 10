@@ -4,7 +4,27 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 enum TableStatus { idle, loading, ready, error }
-enum ItemType { beer, coffee, nation, none }
+enum ItemType { 
+  beer, coffee, nation, none; 
+
+  String get asString => '$name'; 
+
+  List<String> get columns => this == coffee
+    ? ["Nome","Origem","Tipo"]
+    : this == beer
+      ? ["Nome","Estilo","IBU"]
+      : this == nation
+        ? ["Nome","Capital","Idioma","Esporte"]
+        : []; 
+
+  List<String> get properties => this == coffee
+    ? ["blend_name","origin","variety"]
+    : this == beer
+      ? ["name","style","ibu"]
+      : this == nation
+        ? ["nationality","capital","language","national_sport"]
+        : [];
+}
 
 class DataService {
   static const MAX_N_ITEMS = 15;
@@ -27,55 +47,72 @@ class DataService {
   });
 
   void carregar(index) {
-    final funcoes = [carregarCafes, carregarCervejas, carregarNacoes];
-    funcoes[index]();
-  }
+    final params = [ItemType.coffee, ItemType.beer, ItemType.nation];
+    carregarPorTipo(params[index]);
+  } 
 
-  void _carregarDados(ItemType itemType, String path, List<String> propertyNames, List<String> columnNames) {
-    if (tableStateNotifier.value['status'] == TableStatus.loading) return;
+  void ordenarEstadoAtual(String propriedade, bool crescente) { 
+  List objetos = tableStateNotifier.value['dataObjects'] ?? []; 
+  if (objetos.isEmpty) return; 
+  Ordenador ord = Ordenador(); 
+  List objetosOrdenados = ord.ordenar(objetos, propriedade, crescente);
+  emitirEstadoOrdenado(objetosOrdenados, propriedade); 
+}
 
-    if (tableStateNotifier.value['itemType'] != itemType) {
-      tableStateNotifier.value = {
-        'status': TableStatus.loading,
-        'dataObjects': [],
-        'itemType': itemType,
-      };
-    }
 
-    var uri = Uri(
+  Uri montarUri(ItemType type) { 
+    return Uri(
       scheme: 'https',
       host: 'random-data-api.com',
-      path: path,
+      path: 'api/${type.asString}/random_${type.asString}',
       queryParameters: {'size': '$_numberOfItems'},
     );
-
-    http.read(uri).then((jsonString) {
-      var jsonData = jsonDecode(jsonString);
-
-      if (tableStateNotifier.value['status'] != TableStatus.loading) {
-        jsonData = [...tableStateNotifier.value['dataObjects'], ...jsonData];
-      }
-
-      tableStateNotifier.value = {
-        'itemType': itemType,
-        'status': TableStatus.ready,
-        'dataObjects': jsonData,
-        'propertyNames': propertyNames,
-        'columnNames': columnNames,
-      };
-    });
   }
 
-  void carregarCafes() {
-    _carregarDados(ItemType.coffee, 'api/coffee/random_coffee', ["blend_name", "origin", "variety"], ["Nome", "Origem", "Tipo"]);
+  Future<List<dynamic>> acessarApi(Uri uri) async { 
+    var jsonString = await http.read(uri); 
+    var json = jsonDecode(jsonString); 
+    json = [...tableStateNotifier.value['dataObjects'], ...json]; 
+    return json;
+  } 
+
+  void emitirEstadoOrdenado(List objetosOrdenados, String propriedade) { 
+  var estado = tableStateNotifier.value; 
+  estado['dataObjects'] = objetosOrdenados; 
+  estado['sortCriteria'] = propriedade; 
+  estado['ascending'] = true; 
+  tableStateNotifier.value = estado;
+}
+
+  void emitirEstadoPronto(ItemType type, var json) { 
+    tableStateNotifier.value = { 
+      'itemType': type, 
+      'status': TableStatus.ready, 
+      'dataObjects': json, 
+      'propertyNames': type.properties, 
+      'columnNames': type.columns
+    };
+  } 
+
+  void emitirEstadoCarregando(ItemType type) {
+    tableStateNotifier.value = {
+      'status': TableStatus.loading,
+      'dataObjects': [],
+      'itemType': type,
+    };
   }
 
-  void carregarNacoes() {
-    _carregarDados(ItemType.nation, 'api/nation/random_nation', ["nationality", "capital", "language", "national_sport"], ["Nome", "Capital", "Idioma", "Esporte"]);
-  }
+  bool temRequisicaoEmCurso() => tableStateNotifier.value['status'] == TableStatus.loading; 
+  bool mudouTipoDeItemRequisitado(ItemType type) => tableStateNotifier.value['itemType'] != type; 
 
-  void carregarCervejas() {
-    _carregarDados(ItemType.beer, 'api/beer/random_beer', ["name", "style", "ibu"], ["Nome", "Estilo", "IBU"]);
+  void carregarPorTipo(ItemType type) async { 
+    if (temRequisicaoEmCurso()) return; 
+    if (mudouTipoDeItemRequisitado(type)) { 
+      emitirEstadoCarregando(type);
+    }
+    var uri = montarUri(type); 
+    var json = await acessarApi(uri); 
+    emitirEstadoPronto(type, json); 
   }
 }
 
@@ -121,13 +158,13 @@ class MyApp extends StatelessWidget {
           valueListenable: dataService.tableStateNotifier,
           builder: (_, value, __) {
             switch (value['status']) {
-
               case TableStatus.idle:
                 return Center(child: Text("Toque em algum botão"));
               case TableStatus.loading:
                 return Center(child: CircularProgressIndicator());
               case TableStatus.ready:
                 return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
                   child: DataTableWidget(
                     jsonObjects: value['dataObjects'],
                     propertyNames: value['propertyNames'],
@@ -198,6 +235,8 @@ class DataTableWidget extends StatelessWidget {
       columns: columnNames
           .map(
             (name) => DataColumn(
+              onSort: (columnIndex, ascending) => 
+                dataService.ordenarEstadoAtual(propertyNames[columnIndex], ascending),
               label: Expanded(
                 child: Text(
                   name,
@@ -220,29 +259,38 @@ class DataTableWidget extends StatelessWidget {
           .toList(),
     );
   }
-} 
-
-class Ordenador{ 
-     List ordenarCervejasPorNomeCrescente(list cervejas){ 
-        List cervejasOrdenadas = List.of(cervejas);
-        bool trocouAoMenosUm; 
-        do{ 
-           trocouaoMenosUm = false; 
-           for(int i = 0;i<cervejasOrdenadas.length-1;i++){ 
-              var atual = cervejasOrdenadas[i]; 
-              var proximo = cervejasOrdenadas[i+1]; 
-              if(atual["name"].compareTo(proximo["name"])>0){ 
-                var aux = cervejasOrdenadas[i]; 
-                cervejasOrdenadas[i] = cervejasOrdenadas[i+1]; 
-                cervejasOrdenadas[i+1] = aux; 
-                trocouAoMenosUm = true;
-              }
-           }
-        }while(trocouAoMenosUm);
-
-      return(trocouAoMenosUm);
-
-     }
+}
 
 
+
+class Ordenador {
+  List ordenar(List itens, String propriedade, bool crescente) {
+    List itensOrdenados = List.of(itens);
+    bool trocouAoMenosUm;
+
+    do {
+      trocouAoMenosUm = false;
+      for (int i = 0; i < itensOrdenados.length - 1; i++) {
+        var atual = itensOrdenados[i];
+        var proximo = itensOrdenados[i + 1];
+        if (crescente) {
+          if (atual[propriedade].compareTo(proximo[propriedade]) > 0) {
+            var aux = itensOrdenados[i];
+            itensOrdenados[i] = itensOrdenados[i + 1];
+            itensOrdenados[i + 1] = aux;
+            trocouAoMenosUm = true;
+          }
+        } else {
+          if (atual[propriedade].compareTo(proximo[propriedade]) < 0) {
+            var aux = itensOrdenados[i];
+            itensOrdenados[i] = itensOrdenados[i + 1];
+            itensOrdenados[i + 1] = aux;
+            trocouAoMenosUm = true;
+          }
+        }
+      }
+    } while (trocouAoMenosUm);
+
+    return itensOrdenados;
+  }
 }
