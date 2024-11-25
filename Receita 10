@@ -165,10 +165,13 @@ class MyApp extends StatelessWidget {
               case TableStatus.ready:
                 return SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  child: DataTableWidget(
-                    jsonObjects: value['dataObjects'],
-                    propertyNames: value['propertyNames'],
-                    columnNames: value['columnNames'],
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.vertical,
+                    child: DataTableWidget(
+                      jsonObjects: value['dataObjects'],
+                      propertyNames: value['propertyNames'],
+                      columnNames: value['columnNames'],
+                    ),
                   ),
                 );
               case TableStatus.error:
@@ -183,6 +186,7 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+
 
 class NewNavBar extends HookWidget {
   final void Function(int) _itemSelectedCallback;
